@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand palette derived from the extracted company logo. */
+  --color-brand-50: #eef2fb;
+  --color-brand-100: #d8e1f6;
+  --color-brand-200: #b3c4ec;
+  --color-brand-300: #82a0de;
+  --color-brand-400: #4f78cb;
+  --color-brand-500: #2c56b4;
+  --color-brand-600: #10358c;
+  --color-brand-700: #0d2b74;
+  --color-brand-800: #0a2259;
+  --color-brand-900: #081a42;
+  --color-brand-950: #051129;
+
+  /* Accent orange derived from the logo mark. */
+  --color-accent-50: #fdf3e5;
+  --color-accent-100: #fbe6c6;
+  --color-accent-200: #f6cd90;
+  --color-accent-300: #f0b25c;
+  --color-accent-400: #ea9c38;
+  --color-accent-500: #e58a18;
+  --color-accent-600: #c97410;
+  --color-accent-700: #a35c0d;
+  --color-accent-800: #7c460b;
+  --color-accent-900: #583207;
+
+  /* Neutral ink scale. */
+  --color-ink-50: #f2f5f8;
+  --color-ink-100: #e3e9ef;
+  --color-ink-200: #c6d1dc;
+  --color-ink-300: #9fb0c0;
+  --color-ink-400: #74899e;
+  --color-ink-500: #54677b;
+  --color-ink-600: #3d4e60;
+  --color-ink-700: #2b3949;
+  --color-ink-800: #1d2b39;
+  --color-ink-900: #142333;
+
+  --color-surface: #f5f7fa;
+
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: "Manrope Variable", "Inter Variable", ui-sans-serif,
+    system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+
+  --shadow-card: 0 1px 3px rgb(20 35 51 / 0.08), 0 1px 2px rgb(20 35 51 / 0.04);
+
+  --animate-fade-in: fade-in 0.4s ease-out both;
+  --animate-slide-up: slide-up 0.5s ease-out both;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-white);
+  color: var(--color-ink-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-brand-600);
+  color: #ffffff;
+}
+
+/* Consistent, visible keyboard focus. */
+:focus-visible {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Skip link: hidden until focused. */
+.skip-link {
+  position: absolute;
+  left: 0.75rem;
+  top: -4rem;
+  z-index: 100;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.5rem;
+  background: var(--color-brand-600);
+  color: #ffffff;
+  font-weight: 700;
+  transition: top 0.15s ease-out;
+}
+.skip-link:focus {
+  top: 0.75rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
