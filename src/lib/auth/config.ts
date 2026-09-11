@@ -14,6 +14,7 @@ import { eq } from "drizzle-orm";
 
 import { getDb, users, accounts, sessions, verifications } from "@/lib/db";
 import { getServerEnv } from "@/lib/env";
+import { writeAudit } from "@/lib/audit/service";
 
 const globalForAuth = globalThis as unknown as {
   __lalicaAuth?: ReturnType<typeof createAuth>;
@@ -80,6 +81,23 @@ function createAuth() {
               // be recorded; log it for operators instead.
               console.error("[auth] failed to record user subject", error);
             }
+          },
+        },
+      },
+      session: {
+        create: {
+          // Fires on every successful sign-in (a new session row is
+          // created). Covers every provider, including future ones added
+          // to socialProviders; demo sign-in bypasses Better Auth's own
+          // session creation and logs itself directly, see
+          // src/app/api/auth/demo-signin/route.ts.
+          after: async (session) => {
+            await writeAudit({
+              actorId: session.userId,
+              action: "user.sign_in",
+              entityType: "user",
+              entityId: session.userId,
+            });
           },
         },
       },

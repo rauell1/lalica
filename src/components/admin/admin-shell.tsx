@@ -54,7 +54,11 @@ export function AdminShell({
   async function signOut() {
     setSigningOut(true);
     try {
-      await fetch("/api/auth/sign-out", { method: "POST" });
+      await fetch("/api/auth/sign-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
       router.push("/admin/login");
       router.refresh();
     } finally {

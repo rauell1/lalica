@@ -18,6 +18,7 @@ import { SESSION_COOKIE_NAME } from "@/lib/auth/config";
 import { ROLES, type UserRole } from "@/lib/db";
 import { assertSameOrigin, jsonError } from "@/lib/utils/http";
 import { AppError } from "@/lib/errors";
+import { writeAudit } from "@/lib/audit/service";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
@@ -57,6 +58,13 @@ export async function POST(request: NextRequest) {
       expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000),
       ipAddress: null,
       userAgent: null,
+    });
+    await writeAudit({
+      actorId: demoUser.id,
+      action: "user.sign_in",
+      entityType: "user",
+      entityId: demoUser.id,
+      metadata: { demo: true },
     });
 
     // Better Auth reads signed cookies: value.signature where the
