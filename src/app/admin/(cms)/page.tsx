@@ -2,7 +2,7 @@ import Link from "next/link";
 import { desc, eq, sql } from "drizzle-orm";
 
 import { requireAdminPage } from "@/lib/auth/session";
-import { getDb, content, enquiries } from "@/lib/db";
+import { runAsActor, content, enquiries } from "@/lib/db";
 import { CONTENT_TYPE_LABELS } from "@/lib/content/types";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { hasPermission } from "@/lib/auth/roles";
@@ -11,41 +11,45 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminDashboardPage() {
   const user = await requireAdminPage(["administrator", "editor", "enquiry_manager"]);
-  const db = getDb();
 
-  const contentCounts = await db
-    .select({
-      type: content.type,
-      status: content.status,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(content)
-    .groupBy(content.type, content.status);
+  const { contentCounts, enquiryRows, failedNotifications, recent } =
+    await runAsActor(user.id, async (db) => {
+      const contentCounts = await db
+        .select({
+          type: content.type,
+          status: content.status,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(content)
+        .groupBy(content.type, content.status);
 
-  const enquiryRows = await db
-    .select({
-      status: enquiries.status,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(enquiries)
-    .groupBy(enquiries.status);
+      const enquiryRows = await db
+        .select({
+          status: enquiries.status,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(enquiries)
+        .groupBy(enquiries.status);
 
-  const failedNotifications = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(enquiries)
-    .where(eq(enquiries.notificationStatus, "failed"));
+      const failedNotifications = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(enquiries)
+        .where(eq(enquiries.notificationStatus, "failed"));
 
-  const recent = await db
-    .select({
-      id: content.id,
-      type: content.type,
-      title: content.title,
-      status: content.status,
-      updatedAt: content.updatedAt,
-    })
-    .from(content)
-    .orderBy(desc(content.updatedAt))
-    .limit(6);
+      const recent = await db
+        .select({
+          id: content.id,
+          type: content.type,
+          title: content.title,
+          status: content.status,
+          updatedAt: content.updatedAt,
+        })
+        .from(content)
+        .orderBy(desc(content.updatedAt))
+        .limit(6);
+
+      return { contentCounts, enquiryRows, failedNotifications, recent };
+    });
 
   const openEnquiries = enquiryRows
     .filter((row) => row.status === "new")

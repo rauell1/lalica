@@ -29,7 +29,7 @@ import { listUsers, setUserActive, setUserRole } from "@/lib/users/service";
 import { deleteMedia, setMediaStatus, updateMedia } from "@/lib/media/service";
 import { updateEnquiry } from "@/lib/enquiry/service";
 import { sendEnquiryNotification, type EnquiryNotificationData } from "@/lib/enquiry/notify";
-import { getDb, enquiries, type ContentType, type UserRole } from "@/lib/db";
+import { runAsActor, enquiries, type ContentType, type UserRole } from "@/lib/db";
 import { eq } from "drizzle-orm";
 
 export type ActionResult<T = void> =
@@ -274,13 +274,14 @@ export async function retryEnquiryNotificationAction(input: {
   id: string;
 }): Promise<ActionResult<{ status: string }>> {
   return withActor("canAccessEnquiries", async (actor) => {
-    const db = getDb();
-    const rows = await db
-      .select()
-      .from(enquiries)
-      .where(eq(enquiries.id, input.id))
-      .limit(1);
-    const enquiry = rows[0];
+    const enquiry = await runAsActor(actor.id, async (db) => {
+      const rows = await db
+        .select()
+        .from(enquiries)
+        .where(eq(enquiries.id, input.id))
+        .limit(1);
+      return rows[0];
+    });
     if (!enquiry) {
       throw new AppError("not_found", "This enquiry does not exist.");
     }
@@ -294,14 +295,16 @@ export async function retryEnquiryNotificationAction(input: {
       message: enquiry.message,
     };
     const result = await sendEnquiryNotification(data);
-    await db
-      .update(enquiries)
-      .set({
-        notificationStatus: result.status,
-        notificationError: result.error ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(enquiries.id, input.id));
+    await runAsActor(actor.id, (db) =>
+      db
+        .update(enquiries)
+        .set({
+          notificationStatus: result.status,
+          notificationError: result.error ?? null,
+          updatedAt: new Date(),
+        })
+        .where(eq(enquiries.id, input.id)),
+    );
     return { status: result.status };
   });
 }

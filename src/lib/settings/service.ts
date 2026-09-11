@@ -8,7 +8,7 @@
 
 import { eq } from "drizzle-orm";
 
-import { getDb, siteSettings } from "@/lib/db";
+import { getPublicDb, runAsActor, siteSettings } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { assertPermission, type SessionUser } from "@/lib/auth/roles";
 import { writeAudit } from "@/lib/audit/service";
@@ -23,7 +23,7 @@ import {
 export type { SettingsKey };
 
 export async function getRawSettingsValue<K extends SettingsKey>(key: K) {
-  const db = getDb();
+  const db = getPublicDb();
   const rows = await db
     .select()
     .from(siteSettings)
@@ -59,24 +59,25 @@ export async function setSettingsValue<K extends SettingsKey>(input: {
   }
 
   const parsed = parseSettingsValue(input.key, input.value);
-  const db = getDb();
 
-  await db
-    .insert(siteSettings)
-    .values({
-      key: input.key,
-      value: parsed as Record<string, unknown>,
-      updatedById: input.actor.id,
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: siteSettings.key,
-      set: {
+  await runAsActor(input.actor.id, (db) =>
+    db
+      .insert(siteSettings)
+      .values({
+        key: input.key,
         value: parsed as Record<string, unknown>,
         updatedById: input.actor.id,
         updatedAt: new Date(),
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: siteSettings.key,
+        set: {
+          value: parsed as Record<string, unknown>,
+          updatedById: input.actor.id,
+          updatedAt: new Date(),
+        },
+      }),
+  );
 
   await writeAudit({
     actorId: input.actor.id,

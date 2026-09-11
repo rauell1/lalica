@@ -46,7 +46,14 @@ production data never mix.
 4. Migrations run through the deployment step below and never on request.
    The runner takes an advisory lock so concurrent deploys cannot apply
    the same migration twice. All migrations are checked in under
-   /drizzle.
+   /drizzle, including drizzle/0001_rls.sql, which enables Row Level
+   Security on the six business tables and creates a second, restricted
+   Postgres role, app_runtime, that the running app connects as (see
+   "Row Level Security" in docs/authentication.md). After the migration
+   runs for a new database, set app_runtime's password directly
+   (`ALTER ROLE app_runtime PASSWORD '...';`, generated fresh, never
+   committed) and set APP_DATABASE_URL with those credentials before the
+   app serves real traffic.
 
 ### 2. Upstash Redis
 
@@ -91,6 +98,7 @@ production data never mix.
 | Variable | Production | Preview |
 | --- | --- | --- |
 | DATABASE_URL | Production Neon, unpooled | Preview Neon |
+| APP_DATABASE_URL | app_runtime role, same database as DATABASE_URL | app_runtime role, preview database |
 | BETTER_AUTH_SECRET | Long random secret | Different random secret |
 | PUBLIC_APP_URL | https://your-domain after ownership is verified | Vercel preview URL (set by Vercel automatically when left empty; keep it unset to use the preview URL) |
 | GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET | Production OAuth client | Same client with preview origins authorised, or a separate test client |

@@ -19,10 +19,10 @@ import {
   head as headBlob,
 } from "@vercel/blob";
 import { generateClientTokenFromReadWriteToken } from "@vercel/blob/client";
-import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import sharp, { type Sharp } from "sharp";
 
-import { content, getDb, media, type MediaStatus } from "@/lib/db";
+import { content, getPublicDb, runAsActor, media, type MediaStatus } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import {
   assertPermission,
@@ -303,25 +303,26 @@ async function insertMediaRow(input: {
   height: number | null;
   meta: MediaUploadMeta;
 }): Promise<MediaRow> {
-  const db = getDb();
-  const inserted = await db
-    .insert(media)
-    .values({
-      storageKey: input.storageKey,
-      storageProvider: input.storageProvider,
-      publicUrl: input.publicUrl ?? null,
-      mimeType: input.mimeType,
-      sizeBytes: input.sizeBytes,
-      width: input.width,
-      height: input.height,
-      altText: input.meta.altText,
-      caption: input.meta.caption || null,
-      sourceNote: input.meta.sourceNote || null,
-      rightsStatus: input.meta.rightsStatus ?? "unconfirmed",
-      status: "draft",
-      uploaderId: input.actor.id,
-    })
-    .returning();
+  const inserted = await runAsActor(input.actor.id, (db) =>
+    db
+      .insert(media)
+      .values({
+        storageKey: input.storageKey,
+        storageProvider: input.storageProvider,
+        publicUrl: input.publicUrl ?? null,
+        mimeType: input.mimeType,
+        sizeBytes: input.sizeBytes,
+        width: input.width,
+        height: input.height,
+        altText: input.meta.altText,
+        caption: input.meta.caption || null,
+        sourceNote: input.meta.sourceNote || null,
+        rightsStatus: input.meta.rightsStatus ?? "unconfirmed",
+        status: "draft",
+        uploaderId: input.actor.id,
+      })
+      .returning(),
+  );
   const row = inserted[0] as MediaRow;
   await writeAudit({
     actorId: input.actor.id,
@@ -441,32 +442,34 @@ export async function listMedia(input: {
   pageSize: number;
 }) {
   assertPermission(input.actor.role, "canUploadMedia");
-  const db = getDb();
-  const conditions = [];
+  const conditions: SQL[] = [];
   if (input.q) {
     conditions.push(
       or(ilike(media.altText, `%${input.q}%`), ilike(media.storageKey, `%${input.q}%`))!,
     );
   }
-  const rows = await db
-    .select()
-    .from(media)
-    .where(and(...conditions))
-    .orderBy(desc(media.createdAt))
-    .limit(input.pageSize)
-    .offset((input.page - 1) * input.pageSize);
-  const countRows = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(media)
-    .where(and(...conditions));
-  return { rows: rows as MediaRow[], total: countRows[0]?.count ?? 0 };
+  return runAsActor(input.actor.id, async (db) => {
+    const rows = await db
+      .select()
+      .from(media)
+      .where(and(...conditions))
+      .orderBy(desc(media.createdAt))
+      .limit(input.pageSize)
+      .offset((input.page - 1) * input.pageSize);
+    const countRows = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(media)
+      .where(and(...conditions));
+    return { rows: rows as MediaRow[], total: countRows[0]?.count ?? 0 };
+  });
 }
 
 export async function getMedia(actor: SessionUser, id: string): Promise<MediaRow> {
   assertPermission(actor.role, "canUploadMedia");
-  const db = getDb();
-  const rows = await db.select().from(media).where(eq(media.id, id)).limit(1);
-  const row = rows[0];
+  const row = await runAsActor(actor.id, async (db) => {
+    const rows = await db.select().from(media).where(eq(media.id, id)).limit(1);
+    return rows[0];
+  });
   if (!row) throw new AppError("not_found", "This image does not exist.");
   return row as MediaRow;
 }
@@ -481,17 +484,18 @@ export async function updateMedia(input: {
 }): Promise<MediaRow> {
   assertPermission(input.actor.role, "canUploadMedia");
   await getMedia(input.actor, input.id);
-  const db = getDb();
-  const updated = await db
-    .update(media)
-    .set({
-      altText: input.altText,
-      caption: input.caption || null,
-      sourceNote: input.sourceNote || null,
-      rightsStatus: input.rightsStatus ?? "unconfirmed",
-    })
-    .where(eq(media.id, input.id))
-    .returning();
+  const updated = await runAsActor(input.actor.id, (db) =>
+    db
+      .update(media)
+      .set({
+        altText: input.altText,
+        caption: input.caption || null,
+        sourceNote: input.sourceNote || null,
+        rightsStatus: input.rightsStatus ?? "unconfirmed",
+      })
+      .where(eq(media.id, input.id))
+      .returning(),
+  );
   return updated[0] as MediaRow;
 }
 
@@ -508,12 +512,13 @@ export async function setMediaStatus(
       "Add descriptive alt text before publishing this image.",
     );
   }
-  const db = getDb();
-  const updated = await db
-    .update(media)
-    .set({ status })
-    .where(eq(media.id, id))
-    .returning();
+  const updated = await runAsActor(actor.id, (db) =>
+    db
+      .update(media)
+      .set({ status })
+      .where(eq(media.id, id))
+      .returning(),
+  );
   await writeAudit({
     actorId: actor.id,
     action: status === "published" ? "media.publish" : "media.unpublish",
@@ -528,26 +533,27 @@ export async function deleteMedia(actor: SessionUser, id: string): Promise<void>
   const existing = await getMedia(actor, id);
 
   // Refuse deletion while any content item references the image.
-  const db = getDb();
-  const referencing = await db
-    .select({ id: content.id, title: content.title })
-    .from(content)
-    .where(
-      or(
-        eq(content.coverMediaId, id),
-        sql`${content.draft}::text ilike ${`%${id}%`}`,
-        sql`${content.publishedSnapshot}::text ilike ${`%${id}%`}`,
-      )!,
-    )
-    .limit(1);
-  if (referencing[0]) {
-    throw new AppError(
-      "conflict",
-      `This image is used by "${referencing[0].title}". Remove it from the content item first.`,
-    );
-  }
+  await runAsActor(actor.id, async (db) => {
+    const referencing = await db
+      .select({ id: content.id, title: content.title })
+      .from(content)
+      .where(
+        or(
+          eq(content.coverMediaId, id),
+          sql`${content.draft}::text ilike ${`%${id}%`}`,
+          sql`${content.publishedSnapshot}::text ilike ${`%${id}%`}`,
+        )!,
+      )
+      .limit(1);
+    if (referencing[0]) {
+      throw new AppError(
+        "conflict",
+        `This image is used by "${referencing[0].title}". Remove it from the content item first.`,
+      );
+    }
 
-  await db.delete(media).where(eq(media.id, id));
+    await db.delete(media).where(eq(media.id, id));
+  });
 
   if (existing.storageProvider === "local") {
     await deleteLocalFile(existing.storageKey);
@@ -573,11 +579,14 @@ export async function resolveMediaForRender(
   ids: string[],
 ): Promise<Map<string, MediaRow>> {
   if (ids.length === 0) return new Map();
-  const db = getDb();
-  const rows = await db
-    .select()
-    .from(media)
-    .where(inArray(media.id, ids));
+  const rows = actor
+    ? await runAsActor(actor.id, (db) =>
+        db.select().from(media).where(inArray(media.id, ids)),
+      )
+    : await getPublicDb()
+        .select()
+        .from(media)
+        .where(inArray(media.id, ids));
   const out = new Map<string, MediaRow>();
   for (const row of rows) {
     const typed = row as MediaRow;

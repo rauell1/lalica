@@ -9,7 +9,7 @@
 import { eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 
-import { getDb, media } from "@/lib/db";
+import { getPublicDb, runAsActor, media } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/roles";
 import { readLocalFile } from "@/lib/media/service";
@@ -27,9 +27,21 @@ export async function GET(
     return new Response(null, { status: 404 });
   }
 
-  const db = getDb();
-  const rows = await db.select().from(media).where(eq(media.id, id)).limit(1);
-  const row = rows[0];
+  // Look up the session before querying so a staff member's request runs
+  // with their RLS visibility (draft and published); an anonymous request
+  // only ever sees published rows, so a draft id simply comes back empty.
+  const user = await getSessionUser();
+  const row = user
+    ? await runAsActor(user.id, async (db) => {
+        const rows = await db.select().from(media).where(eq(media.id, id)).limit(1);
+        return rows[0];
+      })
+    : await getPublicDb()
+        .select()
+        .from(media)
+        .where(eq(media.id, id))
+        .limit(1)
+        .then((rows) => rows[0]);
   if (!row) return new Response(null, { status: 404 });
 
   if (row.status === "published") {
@@ -56,7 +68,6 @@ export async function GET(
   }
 
   // Draft media: staff only, never publicly cached.
-  const user = await getSessionUser();
   if (!user || !hasPermission(user.role, "canUploadMedia")) {
     return new Response(null, { status: 404 });
   }

@@ -11,7 +11,7 @@
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
-import { content, getDb, media, siteSettings, type ContentStatus, type ContentType } from "@/lib/db";
+import { content, getPublicDb, runAsActor, media, siteSettings, type ContentStatus, type ContentType } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { assertPermission, hasPermission, type SessionUser } from "@/lib/auth/roles";
 import { writeAudit } from "@/lib/audit/service";
@@ -54,20 +54,25 @@ export interface ContentRow {
 /* ------------------------------------------------------------------ */
 
 export async function ensureUniqueSlug(
+  actorId: string,
   type: ContentType,
   desired: string,
   excludeId?: string,
 ): Promise<string> {
-  const db = getDb();
   let slug = desired;
   let attempt = 0;
   for (;;) {
-    const rows = await db
-      .select({ id: content.id })
-      .from(content)
-      .where(and(eq(content.type, type), eq(content.slug, slug)))
-      .limit(1);
-    const conflict = rows[0];
+    // Runs as the actor (not the public connection) so drafts and other
+    // unpublished items are visible here too: a slug must be unique across
+    // every status, not just published ones.
+    const conflict = await runAsActor(actorId, async (db) => {
+      const rows = await db
+        .select({ id: content.id })
+        .from(content)
+        .where(and(eq(content.type, type), eq(content.slug, slug)))
+        .limit(1);
+      return rows[0];
+    });
     if (!conflict || conflict.id === excludeId) return slug;
     attempt += 1;
     slug = `${desired.replace(/-+$/, "")}-${attempt + 1}`.slice(0, 80);
@@ -82,7 +87,7 @@ export async function getPublishedBySlug(
   type: ContentType,
   slug: string,
 ): Promise<ContentRow | null> {
-  const db = getDb();
+  const db = getPublicDb();
   const rows = await db
     .select()
     .from(content)
@@ -101,7 +106,7 @@ export async function listPublished(
   type: ContentType,
   options?: { limit?: number; offset?: number },
 ): Promise<ContentRow[]> {
-  const db = getDb();
+  const db = getPublicDb();
   const order =
     type === "service"
       ? sql`(${content.metadata}->>'order')::int asc`
@@ -116,7 +121,7 @@ export async function listPublished(
 }
 
 export async function countPublished(type: ContentType): Promise<number> {
-  const db = getDb();
+  const db = getPublicDb();
   const rows = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(content)
@@ -152,7 +157,6 @@ export async function listContentForAdmin(input: {
   pageSize: number;
 }) {
   assertPermission(input.actor.role, "canEditContent");
-  const db = getDb();
 
   const conditions = [eq(content.type, input.type)];
   if (input.status && input.status !== "all") {
@@ -167,20 +171,22 @@ export async function listContentForAdmin(input: {
     );
   }
 
-  const rows = await db
-    .select()
-    .from(content)
-    .where(and(...conditions))
-    .orderBy(desc(content.updatedAt))
-    .limit(input.pageSize)
-    .offset((input.page - 1) * input.pageSize);
+  return runAsActor(input.actor.id, async (db) => {
+    const rows = await db
+      .select()
+      .from(content)
+      .where(and(...conditions))
+      .orderBy(desc(content.updatedAt))
+      .limit(input.pageSize)
+      .offset((input.page - 1) * input.pageSize);
 
-  const countRows = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(content)
-    .where(and(...conditions));
+    const countRows = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(content)
+      .where(and(...conditions));
 
-  return { rows: rows as ContentRow[], total: countRows[0]?.count ?? 0 };
+    return { rows: rows as ContentRow[], total: countRows[0]?.count ?? 0 };
+  });
 }
 
 export async function getContentForAdmin(
@@ -188,13 +194,14 @@ export async function getContentForAdmin(
   id: string,
 ): Promise<ContentRow> {
   assertPermission(actor.role, "canEditContent");
-  const db = getDb();
-  const rows = await db
-    .select()
-    .from(content)
-    .where(eq(content.id, id))
-    .limit(1);
-  const row = rows[0];
+  const row = await runAsActor(actor.id, async (db) => {
+    const rows = await db
+      .select()
+      .from(content)
+      .where(eq(content.id, id))
+      .limit(1);
+    return rows[0];
+  });
   if (!row) {
     throw new AppError("not_found", "This content item does not exist.");
   }
@@ -213,26 +220,27 @@ export async function createContent<T extends ContentType>(input: {
   assertPermission(input.actor.role, "canEditContent");
 
   const parsed = validateDraftOrThrow(input.type, input.draft);
-  const slug = await ensureUniqueSlug(input.type, parsed.slug);
+  const slug = await ensureUniqueSlug(input.actor.id, input.type, parsed.slug);
   const finalDraft = { ...parsed, slug };
 
-  const db = getDb();
-  const inserted = await db
-    .insert(content)
-    .values({
-      type: input.type,
-      slug,
-      title: parsed.title,
-      excerpt: parsed.excerpt,
-      body: [],
-      draft: finalDraft,
-      status: "draft",
-      metadata: parsed.metadata,
-      createdById: input.actor.id,
-      updatedById: input.actor.id,
-      version: 1,
-    })
-    .returning();
+  const inserted = await runAsActor(input.actor.id, (db) =>
+    db
+      .insert(content)
+      .values({
+        type: input.type,
+        slug,
+        title: parsed.title,
+        excerpt: parsed.excerpt,
+        body: [],
+        draft: finalDraft,
+        status: "draft",
+        metadata: parsed.metadata,
+        createdById: input.actor.id,
+        updatedById: input.actor.id,
+        version: 1,
+      })
+      .returning(),
+  );
 
   const row = inserted[0] as ContentRow;
   await writeAudit({
@@ -252,7 +260,6 @@ export async function updateContent(input: {
   expectedVersion: number;
 }): Promise<ContentRow> {
   assertPermission(input.actor.role, "canEditContent");
-  const db = getDb();
 
   const existing = await getContentForAdmin(input.actor, input.id);
   if (existing.status === "archived") {
@@ -266,21 +273,28 @@ export async function updateContent(input: {
   }
 
   const parsed = validateDraftOrThrow(existing.type, input.draft);
-  const slug = await ensureUniqueSlug(existing.type, parsed.slug, existing.id);
+  const slug = await ensureUniqueSlug(
+    input.actor.id,
+    existing.type,
+    parsed.slug,
+    existing.id,
+  );
   const finalDraft = { ...parsed, slug };
 
-  const updated = await db
-    .update(content)
-    .set({
-      draft: finalDraft,
-      updatedById: input.actor.id,
-      updatedAt: new Date(),
-      version: existing.version + 1,
-      // Keep the public columns untouched: editing a published item never
-      // exposes draft changes.
-    })
-    .where(eq(content.id, existing.id))
-    .returning();
+  const updated = await runAsActor(input.actor.id, (db) =>
+    db
+      .update(content)
+      .set({
+        draft: finalDraft,
+        updatedById: input.actor.id,
+        updatedAt: new Date(),
+        version: existing.version + 1,
+        // Keep the public columns untouched: editing a published item never
+        // exposes draft changes.
+      })
+      .where(eq(content.id, existing.id))
+      .returning(),
+  );
 
   const row = updated[0] as ContentRow;
   await writeAudit({
@@ -305,17 +319,18 @@ export async function submitForReview(
       "Only draft items can be submitted for review.",
     );
   }
-  const db = getDb();
-  const updated = await db
-    .update(content)
-    .set({
-      status: "in_review",
-      updatedById: actor.id,
-      updatedAt: new Date(),
-      version: existing.version + 1,
-    })
-    .where(eq(content.id, id))
-    .returning();
+  const updated = await runAsActor(actor.id, (db) =>
+    db
+      .update(content)
+      .set({
+        status: "in_review",
+        updatedById: actor.id,
+        updatedAt: new Date(),
+        version: existing.version + 1,
+      })
+      .where(eq(content.id, id))
+      .returning(),
+  );
   const row = updated[0] as ContentRow;
   await writeAudit({
     actorId: actor.id,
@@ -331,7 +346,6 @@ export async function publishContent(
   id: string,
 ): Promise<ContentRow> {
   assertPermission(actor.role, "canPublish");
-  const db = getDb();
 
   const existing = await getContentForAdmin(actor, id);
   if (existing.status === "archived") {
@@ -359,7 +373,7 @@ export async function publishContent(
   }
   assertNoForbiddenDashes(draft);
 
-  await assertReferencedMediaPublished(draft);
+  await assertReferencedMediaPublished(actor.id, draft);
 
   const previousSlug =
     existing.publishedSnapshot &&
@@ -369,7 +383,7 @@ export async function publishContent(
       : existing.slug;
 
   if (draft.slug !== previousSlug && existing.status === "published") {
-    await registerSlugRedirect(existing.type, previousSlug, draft.slug);
+    await registerSlugRedirect(actor.id, existing.type, previousSlug, draft.slug);
   }
 
   const snapshot = {
@@ -378,26 +392,28 @@ export async function publishContent(
     publishedById: actor.id,
   };
 
-  const updated = await db
-    .update(content)
-    .set({
-      title: draft.title,
-      slug: draft.slug,
-      excerpt: draft.excerpt,
-      body: draft.body,
-      coverMediaId: draft.coverMediaId,
-      seoTitle: draft.seoTitle,
-      seoDescription: draft.seoDescription,
-      metadata: draft.metadata,
-      publishedSnapshot: snapshot,
-      status: "published",
-      publishedAt: new Date(),
-      updatedById: actor.id,
-      updatedAt: new Date(),
-      version: existing.version + 1,
-    })
-    .where(eq(content.id, id))
-    .returning();
+  const updated = await runAsActor(actor.id, (db) =>
+    db
+      .update(content)
+      .set({
+        title: draft.title,
+        slug: draft.slug,
+        excerpt: draft.excerpt,
+        body: draft.body,
+        coverMediaId: draft.coverMediaId,
+        seoTitle: draft.seoTitle,
+        seoDescription: draft.seoDescription,
+        metadata: draft.metadata,
+        publishedSnapshot: snapshot,
+        status: "published",
+        publishedAt: new Date(),
+        updatedById: actor.id,
+        updatedAt: new Date(),
+        version: existing.version + 1,
+      })
+      .where(eq(content.id, id))
+      .returning(),
+  );
 
   const row = updated[0] as ContentRow;
   await writeAudit({
@@ -419,17 +435,18 @@ export async function unpublishContent(
   if (existing.status !== "published") {
     throw new AppError("conflict", "Only published items can be unpublished.");
   }
-  const db = getDb();
-  const updated = await db
-    .update(content)
-    .set({
-      status: "draft",
-      updatedById: actor.id,
-      updatedAt: new Date(),
-      version: existing.version + 1,
-    })
-    .where(eq(content.id, id))
-    .returning();
+  const updated = await runAsActor(actor.id, (db) =>
+    db
+      .update(content)
+      .set({
+        status: "draft",
+        updatedById: actor.id,
+        updatedAt: new Date(),
+        version: existing.version + 1,
+      })
+      .where(eq(content.id, id))
+      .returning(),
+  );
   const row = updated[0] as ContentRow;
   await writeAudit({
     actorId: actor.id,
@@ -450,17 +467,18 @@ export async function archiveContent(
   if (existing.status === "archived") {
     throw new AppError("conflict", "This item is already archived.");
   }
-  const db = getDb();
-  const updated = await db
-    .update(content)
-    .set({
-      status: "archived",
-      updatedById: actor.id,
-      updatedAt: new Date(),
-      version: existing.version + 1,
-    })
-    .where(eq(content.id, id))
-    .returning();
+  const updated = await runAsActor(actor.id, (db) =>
+    db
+      .update(content)
+      .set({
+        status: "archived",
+        updatedById: actor.id,
+        updatedAt: new Date(),
+        version: existing.version + 1,
+      })
+      .where(eq(content.id, id))
+      .returning(),
+  );
   const row = updated[0] as ContentRow;
   await writeAudit({
     actorId: actor.id,
@@ -481,17 +499,18 @@ export async function restoreContent(
   if (existing.status !== "archived") {
     throw new AppError("conflict", "Only archived items can be restored.");
   }
-  const db = getDb();
-  const updated = await db
-    .update(content)
-    .set({
-      status: "draft",
-      updatedById: actor.id,
-      updatedAt: new Date(),
-      version: existing.version + 1,
-    })
-    .where(eq(content.id, id))
-    .returning();
+  const updated = await runAsActor(actor.id, (db) =>
+    db
+      .update(content)
+      .set({
+        status: "draft",
+        updatedById: actor.id,
+        updatedAt: new Date(),
+        version: existing.version + 1,
+      })
+      .where(eq(content.id, id))
+      .returning(),
+  );
   const row = updated[0] as ContentRow;
   await writeAudit({
     actorId: actor.id,
@@ -514,8 +533,9 @@ export async function deleteContent(
       "Archive an item before deleting it. Published and draft items cannot be deleted directly.",
     );
   }
-  const db = getDb();
-  await db.delete(content).where(eq(content.id, id));
+  await runAsActor(actor.id, (db) =>
+    db.delete(content).where(eq(content.id, id)),
+  );
   await writeAudit({
     actorId: actor.id,
     action: "content.delete",
@@ -550,16 +570,18 @@ function assertNoForbiddenDashes(draft: ContentDraft): void {
 }
 
 export async function assertReferencedMediaPublished(
+  actorId: string,
   draft: ContentDraft,
 ): Promise<void> {
   const ids = collectDraftMediaIds(draft);
   if (ids.length === 0) return;
-  const db = getDb();
-  const rows = await db
-    .select({ id: media.id, status: media.status })
-    .from(media)
-    .where(and(inArray(media.id, ids), sql`${media.status} != 'published'`))
-    .limit(20);
+  const rows = await runAsActor(actorId, (db) =>
+    db
+      .select({ id: media.id, status: media.status })
+      .from(media)
+      .where(and(inArray(media.id, ids), sql`${media.status} != 'published'`))
+      .limit(20),
+  );
   if (rows.length > 0) {
     throw new AppError(
       "validation",
@@ -570,6 +592,7 @@ export async function assertReferencedMediaPublished(
 }
 
 async function registerSlugRedirect(
+  actorId: string,
   type: ContentType,
   oldSlug: string,
   newSlug: string,
@@ -585,14 +608,15 @@ async function registerSlugRedirect(
       { from, to, createdAt: new Date().toISOString() },
       ...current.entries.filter((entry) => entry.from !== from),
     ].slice(0, 100);
-    const db = getDb();
-    await db
-      .insert(siteSettings)
-      .values({ key: "redirects", value: { entries }, updatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: siteSettings.key,
-        set: { value: { entries }, updatedAt: new Date() },
-      });
+    await runAsActor(actorId, (db) =>
+      db
+        .insert(siteSettings)
+        .values({ key: "redirects", value: { entries }, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: siteSettings.key,
+          set: { value: { entries }, updatedAt: new Date() },
+        }),
+    );
   } catch (error) {
     console.error("[content] failed to register slug redirect", error);
   }

@@ -5,12 +5,13 @@
  * and the idempotency key guarantees retries cannot create duplicates.
  */
 
-import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 
 import {
   enquiries,
   getDb,
+  runAsActor,
   type EnquiryStatus,
 } from "@/lib/db";
 import { AppError } from "@/lib/errors";
@@ -71,6 +72,15 @@ export async function createEnquiry(input: {
   privacyVersion: string;
   emailTransport?: EmailTransport;
 }): Promise<{ row: EnquiryRow; created: boolean }> {
+  // Uses the owner connection, not the public RLS-gated one: this one
+  // request needs to INSERT, then UPDATE the same row's notification
+  // status, and on a retry SELECT it back by idempotency key. RLS has no
+  // public SELECT/UPDATE policy on enquiries (protecting the public's
+  // PII from being browsed), so this narrow, trusted, non-enumerable
+  // capability (the caller must already hold the exact random
+  // idempotency key) stays on the owner connection rather than forcing
+  // an awkward RLS policy shape. Public visibility is still limited to
+  // exactly INSERT (the contact form) via enquiries_public_insert.
   const db = getDb();
   const publicRef = generatePublicRef();
 
@@ -164,9 +174,8 @@ export async function listEnquiries(input: {
   pageSize: number;
 }) {
   assertPermission(input.actor.role, "canAccessEnquiries");
-  const db = getDb();
 
-  const conditions = [];
+  const conditions: SQL[] = [];
   if (input.status && input.status !== "all") {
     conditions.push(eq(enquiries.status, input.status));
   }
@@ -181,34 +190,36 @@ export async function listEnquiries(input: {
     );
   }
 
-  const rows = await db
-    .select({
-      id: enquiries.id,
-      publicRef: enquiries.publicRef,
-      name: enquiries.name,
-      organisation: enquiries.organisation,
-      email: enquiries.email,
-      telephone: enquiries.telephone,
-      serviceInterest: enquiries.serviceInterest,
-      message: enquiries.message,
-      privacyVersion: enquiries.privacyVersion,
-      status: enquiries.status,
-      assignedToId: enquiries.assignedToId,
-      notificationStatus: enquiries.notificationStatus,
-      createdAt: enquiries.createdAt,
-    })
-    .from(enquiries)
-    .where(and(...conditions))
-    .orderBy(desc(enquiries.createdAt))
-    .limit(input.pageSize)
-    .offset((input.page - 1) * input.pageSize);
+  return runAsActor(input.actor.id, async (db) => {
+    const rows = await db
+      .select({
+        id: enquiries.id,
+        publicRef: enquiries.publicRef,
+        name: enquiries.name,
+        organisation: enquiries.organisation,
+        email: enquiries.email,
+        telephone: enquiries.telephone,
+        serviceInterest: enquiries.serviceInterest,
+        message: enquiries.message,
+        privacyVersion: enquiries.privacyVersion,
+        status: enquiries.status,
+        assignedToId: enquiries.assignedToId,
+        notificationStatus: enquiries.notificationStatus,
+        createdAt: enquiries.createdAt,
+      })
+      .from(enquiries)
+      .where(and(...conditions))
+      .orderBy(desc(enquiries.createdAt))
+      .limit(input.pageSize)
+      .offset((input.page - 1) * input.pageSize);
 
-  const countRows = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(enquiries)
-    .where(and(...conditions));
+    const countRows = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(enquiries)
+      .where(and(...conditions));
 
-  return { rows, total: countRows[0]?.count ?? 0 };
+    return { rows, total: countRows[0]?.count ?? 0 };
+  });
 }
 
 export async function getEnquiry(
@@ -216,13 +227,14 @@ export async function getEnquiry(
   id: string,
 ): Promise<EnquiryRow> {
   assertPermission(actor.role, "canAccessEnquiries");
-  const db = getDb();
-  const rows = await db
-    .select()
-    .from(enquiries)
-    .where(eq(enquiries.id, id))
-    .limit(1);
-  const row = rows[0];
+  const row = await runAsActor(actor.id, async (db) => {
+    const rows = await db
+      .select()
+      .from(enquiries)
+      .where(eq(enquiries.id, id))
+      .limit(1);
+    return rows[0];
+  });
   if (!row) throw new AppError("not_found", "This enquiry does not exist.");
   return row as EnquiryRow;
 }
@@ -240,12 +252,13 @@ export async function updateEnquiry(input: {
   if (input.status) set.status = input.status;
   if (input.assignedToId !== undefined) set.assignedToId = input.assignedToId;
 
-  const db = getDb();
-  const updated = await db
-    .update(enquiries)
-    .set(set)
-    .where(eq(enquiries.id, input.id))
-    .returning();
+  const updated = await runAsActor(input.actor.id, (db) =>
+    db
+      .update(enquiries)
+      .set(set)
+      .where(eq(enquiries.id, input.id))
+      .returning(),
+  );
   return updated[0] as EnquiryRow;
 }
 
@@ -259,9 +272,8 @@ export async function exportEnquiriesCsv(
   options: ExportOptions = {},
 ): Promise<{ csv: string; count: number }> {
   assertPermission(actor.role, "canExportEnquiries");
-  const db = getDb();
 
-  const conditions = [];
+  const conditions: SQL[] = [];
   if (options.status && options.status !== "all") {
     conditions.push(eq(enquiries.status, options.status));
   }
@@ -275,11 +287,13 @@ export async function exportEnquiriesCsv(
     );
   }
 
-  const rows = await db
-    .select()
-    .from(enquiries)
-    .where(and(...conditions))
-    .orderBy(desc(enquiries.createdAt));
+  const rows = await runAsActor(actor.id, (db) =>
+    db
+      .select()
+      .from(enquiries)
+      .where(and(...conditions))
+      .orderBy(desc(enquiries.createdAt)),
+  );
 
   const csv = toCsv(
     [

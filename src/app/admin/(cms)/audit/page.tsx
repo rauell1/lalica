@@ -2,19 +2,20 @@ import Link from "next/link";
 import { desc } from "drizzle-orm";
 
 import { requireAdminPage } from "@/lib/auth/session";
-import { auditLog, getDb } from "@/lib/db";
+import { auditLog, runAsActor } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export default async function AuditAdminPage() {
-  await requireAdminPage(["administrator"]);
+  const user = await requireAdminPage(["administrator"]);
 
-  const db = getDb();
-  const rows = await db
-    .select()
-    .from(auditLog)
-    .orderBy(desc(auditLog.createdAt))
-    .limit(200);
+  const rows = await runAsActor(user.id, (db) =>
+    db
+      .select()
+      .from(auditLog)
+      .orderBy(desc(auditLog.createdAt))
+      .limit(200),
+  );
 
   return (
     <div className="mx-auto max-w-6xl">
