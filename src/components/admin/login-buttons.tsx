@@ -14,6 +14,30 @@ export function LoginButtons({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  async function googleSignIn() {
+    setBusy("google");
+    setError(null);
+    try {
+      const response = await fetch("/api/auth/sign-in/social", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "google", callbackURL: "/admin" }),
+      });
+      const data = (await response.json().catch(() => null)) as {
+        url?: string;
+        error?: string;
+      } | null;
+      if (!response.ok || !data?.url) {
+        setError(data?.error ?? "Google sign-in failed.");
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setError("Google sign-in failed. Please try again.");
+      setBusy(null);
+    }
+  }
+
   async function demoSignIn(role: string) {
     setBusy(role);
     setError(null);
@@ -42,9 +66,11 @@ export function LoginButtons({
   return (
     <div className="space-y-3">
       {googleEnabled && (
-        <a
-          href="/api/auth/sign-in/social?provider=google&callbackURL=/admin"
-          className="flex items-center justify-center gap-3 rounded-md border border-brand-200 bg-white px-4 py-2.5 text-sm font-bold text-ink-900 transition-soft hover:bg-surface"
+        <button
+          type="button"
+          disabled={busy !== null}
+          onClick={googleSignIn}
+          className="flex w-full items-center justify-center gap-3 rounded-md border border-brand-200 bg-white px-4 py-2.5 text-sm font-bold text-ink-900 transition-soft hover:bg-surface disabled:opacity-60"
         >
           <svg aria-hidden="true" width="18" height="18" viewBox="0 0 48 48">
             <path
@@ -64,8 +90,8 @@ export function LoginButtons({
               d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C41.4 35.3 44 30.1 44 24c0-1.3-.1-2.6-.4-3.9z"
             />
           </svg>
-          Continue with Google
-        </a>
+          {busy === "google" ? "Redirecting..." : "Continue with Google"}
+        </button>
       )}
       {!googleEnabled && !demoEnabled && (
         <p className="rounded-md bg-accent-50 px-4 py-3 text-sm font-semibold text-ink-700">
