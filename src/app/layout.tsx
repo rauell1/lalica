@@ -8,6 +8,7 @@ import { getServerEnv } from "@/lib/env";
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { CookieBanner } from "@/components/public/cookie-banner";
+import { Analytics } from "@vercel/analytics/next";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +69,7 @@ export default function RootLayout({
         </main>
         <SiteFooter />
         <CookieBanner />
+        <Analytics />
       </body>
     </html>
   );
