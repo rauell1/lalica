@@ -4,6 +4,18 @@ import { getSettingsCached } from "@/lib/settings/cache";
 import { countPublishedCached } from "@/lib/content/cache";
 import { SiteNav } from "./site-nav";
 
+type NavLink = { label: string; href: string };
+
+function insertBeforeContact(links: NavLink[], entry: NavLink): NavLink[] {
+  const contactIndex = links.findIndex((link) => link.href === "/contact");
+  if (contactIndex === -1) return [...links, entry];
+  return [
+    ...links.slice(0, contactIndex),
+    entry,
+    ...links.slice(contactIndex),
+  ];
+}
+
 export async function SiteHeader() {
   const [company, navigation, features, newsCount, contacts] =
     await Promise.all([
@@ -18,18 +30,15 @@ export async function SiteHeader() {
     features.newsNav === "on" ||
     (features.newsNav === "auto" && newsCount > 0);
 
-  const links = [
-    { label: "Home", href: "/" },
-    { label: "About", href: "/about" },
-    { label: "Services", href: "/services" },
-    { label: "Projects", href: "/projects" },
-    { label: "CSR", href: "/csr" },
-    ...(showNews ? [{ label: "News", href: "/news" }] : []),
-    ...navigation.primary.map((entry) => ({
-      label: entry.label,
-      href: entry.href,
-    })),
-  ];
+  const baseLinks = navigation.primary.map((entry) => ({
+    label: entry.label,
+    href: entry.href,
+  }));
+
+  const links =
+    showNews && !baseLinks.some((link) => link.href === "/news")
+      ? insertBeforeContact(baseLinks, { label: "News", href: "/news" })
+      : baseLinks;
 
   return (
     <header className="sticky top-0 z-40 border-b border-ink-100 bg-white/95 backdrop-blur">
