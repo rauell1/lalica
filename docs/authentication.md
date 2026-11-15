@@ -146,7 +146,7 @@ its own, leak or corrupt data.
   it is recording), and the public enquiry submission path
   (`createEnquiry`/`findByIdempotencyKey` in `src/lib/enquiry/service.ts`),
   which needs to INSERT, then UPDATE that same row's notification status,
-  and on a retry SELECT it back by the caller's own idempotency key — a
+  and on a retry SELECT it back by the caller's own idempotency key: a
   shape RLS cannot express as "visible only if you already know the exact
   key," so it stays on the owner connection as a narrow, non-enumerable,
   audited exception. Public visibility into `enquiries` is otherwise

@@ -14,11 +14,8 @@ import { eq } from "drizzle-orm";
 
 import { getDb, users, accounts, sessions, verifications } from "@/lib/db";
 import { getServerEnv } from "@/lib/env";
+import { scoped } from "@/lib/runtime/request-scope";
 import { writeAudit } from "@/lib/audit/service";
-
-const globalForAuth = globalThis as unknown as {
-  __lalicaAuth?: ReturnType<typeof createAuth>;
-};
 
 function createAuth() {
   const env = getServerEnv();
@@ -106,10 +103,9 @@ function createAuth() {
 }
 
 export function getAuth() {
-  if (!globalForAuth.__lalicaAuth) {
-    globalForAuth.__lalicaAuth = createAuth();
-  }
-  return globalForAuth.__lalicaAuth;
+  // The auth instance holds a database handle, so it shares the database's
+  // scope: per process on Node, per request on Cloudflare Workers.
+  return scoped("lalica.auth", createAuth);
 }
 
 export type Auth = ReturnType<typeof getAuth>;

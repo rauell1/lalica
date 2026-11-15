@@ -5,6 +5,32 @@ guide describes the planned and tested procedure; any step marked
 "verified" refers to local verification only. Update this file after the
 first real deployment.
 
+## Cloudflare Workers hosting (November 2026)
+
+Hosting is moving from Vercel to Cloudflare Workers through the OpenNext
+Cloudflare adapter (`open-next.config.ts`, `wrangler.jsonc`).
+`.github/workflows/deploy-cloudflare.yml` builds and deploys on every push
+to `main`.
+
+- GitHub repository secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
+  `DATABASE_URL` and `BETTER_AUTH_SECRET` (the build prerenders pages from
+  the database). Repository variables: `PUBLIC_APP_URL`,
+  `NEXT_PUBLIC_ENQUIRY_TURNSTILE_SITE_KEY`.
+- Worker secrets (`npx wrangler secret put NAME`, or the Cloudflare
+  dashboard): every runtime variable in `.env.example`.
+- The Worker bundle is about 4.3 MB compressed, which needs the Workers
+  Paid plan (the free plan allows 3 MB).
+- Database and auth handles are created per request on Workers (see
+  `src/lib/runtime/request-scope.ts`), because Workers cannot share a
+  socket between requests.
+- Known gap: CMS image uploads re-encode through `sharp`, which does not
+  run on Workers. Uploading new media fails there until that step is moved
+  to the Cloudflare Images binding. Existing media is unaffected.
+- Local check: `npm run cf:preview` with the variables in `.dev.vars`.
+
+The sections below describe the earlier Vercel plan and still apply to the
+database, rate limiting and email setup.
+
 ## Architecture
 
 One Next.js application on Vercel. One Neon PostgreSQL database per
