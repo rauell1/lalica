@@ -23,9 +23,23 @@ to `main`.
 - Database and auth handles are created per request on Workers (see
   `src/lib/runtime/request-scope.ts`), because Workers cannot share a
   socket between requests.
-- Known gap: CMS image uploads re-encode through `sharp`, which does not
-  run on Workers. Uploading new media fails there until that step is moved
-  to the Cloudflare Images binding. Existing media is unaffected.
+- CMS images are stored in Neon object storage (bucket `media` on the
+  lalica project's production branch), through
+  `src/lib/media/object-storage.ts`. Worker secrets: `AWS_ENDPOINT_URL_S3`,
+  `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+  `OBJECT_STORAGE_BUCKET`. The same code works with Cloudflare R2 later by
+  changing those values. Files are uploaded through `/api/media/upload` and
+  served through `/api/media/[id]`; images uploaded earlier to Vercel Blob
+  keep working while `BLOB_READ_WRITE_TOKEN` is set.
+- Uploads no longer use `sharp` (a native library that cannot run on
+  Workers). Photos wider or taller than 2560 px are scaled down in the
+  browser before upload (`src/lib/media/prepare-upload.ts`). The server
+  then rebuilds every file from its image data alone
+  (`src/lib/media/image-sanitize.ts`): EXIF, XMP, IPTC, comments, text
+  chunks and trailing bytes are dropped, only the camera orientation is
+  kept, and pixels are not changed. It does not decode the image, because a
+  decode and re-encode of a phone photo needs several hundred MB and a
+  Worker has 128 MB; the rebuild takes milliseconds.
 - Local check: `npm run cf:preview` with the variables in `.dev.vars`.
 
 The sections below describe the earlier Vercel plan and still apply to the
@@ -92,7 +106,7 @@ production data never mix.
    ALLOW_LOCAL_LIMITER for closed acceptance environments, documented in
    .env.example).
 
-### 3. Vercel Blob
+### 3. Vercel Blob (replaced by Neon object storage on Cloudflare, see above)
 
 1. Create a Blob store in the Vercel dashboard.
 2. Copy the read/write token into BLOB_READ_WRITE_TOKEN.

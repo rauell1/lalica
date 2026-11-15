@@ -9,6 +9,7 @@ import {
   setMediaStatusAction,
   updateMediaAction,
 } from "@/app/admin/actions";
+import { prepareImageForUpload } from "@/lib/media/prepare-upload";
 
 interface MediaRow {
   id: string;
@@ -258,8 +259,8 @@ export function MediaUploadDialog({
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleUpload() {
-    const file = fileRef.current?.files?.[0];
-    if (!file) {
+    const chosen = fileRef.current?.files?.[0];
+    if (!chosen) {
       setError("Choose an image file first.");
       return;
     }
@@ -270,6 +271,9 @@ export function MediaUploadDialog({
     setBusy(true);
     setError(null);
     try {
+      // Large photos are scaled down on this device first (faster upload,
+      // and the server keeps no decoded copy).
+      const file = await prepareImageForUpload(chosen);
       const authorizeResponse = await fetch("/api/media/authorize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

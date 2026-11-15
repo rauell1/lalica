@@ -13,7 +13,7 @@ follow docs/deployment.md for the first deployment.
 - PostgreSQL on Neon, Drizzle ORM with checked-in migrations
 - Better Auth 1.7.4, invite-only staff access, provider sign-in
 - Upstash Redis for distributed rate limiting (fail closed)
-- Vercel Blob for CMS image uploads (local file storage in demos)
+- Neon object storage for CMS image uploads (Vercel Blob for older uploads, local file storage in demos)
 - Resend for transactional enquiry notifications (optional)
 - Cloudflare Turnstile (optional bot challenge on the enquiry form)
 

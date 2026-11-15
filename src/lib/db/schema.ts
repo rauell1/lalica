@@ -183,7 +183,7 @@ export const media = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     /** Storage key or pathname inside the managed store (never raw bytes). */
     storageKey: text("storage_key").notNull(),
-    /** "local" in development demos, "blob" with Vercel Blob. */
+    /** "local" in development demos, "object-storage" (Neon object storage), "blob" for older Vercel Blob uploads. */
     storageProvider: text("storage_provider").notNull().default("local"),
     /** Public URL for blob backed files, null while still private. */
     publicUrl: text("public_url"),

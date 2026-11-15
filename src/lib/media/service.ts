@@ -1,8 +1,9 @@
 /**
  * Media library service.
  *
- * Uploads go to managed object storage (Vercel Blob in production) or a
- * local development directory for demos. Files are verified by signature,
+ * Uploads go to S3-compatible object storage (Neon object storage; Vercel
+ * Blob for files uploaded before the move) or a local development directory
+ * for demos. Files are verified by signature,
  * size, and dimensions before they are accepted; arbitrary SVG and
  * document uploads are disabled until a safe validation path is added.
  * Draft media stays access-controlled until published.
@@ -20,7 +21,6 @@ import {
 } from "@vercel/blob";
 import { generateClientTokenFromReadWriteToken } from "@vercel/blob/client";
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
-import sharp, { type Sharp } from "sharp";
 
 import { content, getPublicDb, runAsActor, media, type MediaStatus } from "@/lib/db";
 import { AppError } from "@/lib/errors";
@@ -32,6 +32,13 @@ import {
 import { getServerEnv, isProduction } from "@/lib/env";
 import { writeAudit } from "@/lib/audit/service";
 import { enforceLimit, hashIdentifier } from "@/lib/ratelimit";
+import { formatForMime, ImageSanitizeError, sanitizeImage } from "@/lib/media/image-sanitize";
+import {
+  deleteObject,
+  objectStorageConfigured,
+  OBJECT_STORAGE_PROVIDER,
+  putObject,
+} from "@/lib/media/object-storage";
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
@@ -128,34 +135,36 @@ export interface ProcessedImage {
   height: number;
 }
 
-/** Re-encode through sharp: strips embedded metadata and fixes orientation. */
+/**
+ * Validates the file structure and rebuilds it without embedded metadata,
+ * keeping only the camera orientation (src/lib/media/image-sanitize.ts).
+ * No pixels are decoded, so this fits the Cloudflare Workers memory limit;
+ * large photos are scaled down in the browser before upload.
+ */
 export async function processImage(
   input: Buffer,
   mimeType: string,
 ): Promise<ProcessedImage> {
   await validateImageBuffer(input, mimeType);
-  const base = sharp(input, { failOn: "error" }).rotate();
-  let output: Sharp;
-  switch (mimeType) {
-    case "image/jpeg":
-      output = base.jpeg({ quality: 88, mozjpeg: true });
-      break;
-    case "image/png":
-      output = base.png({ compressionLevel: 9 });
-      break;
-    case "image/webp":
-      output = base.webp({ quality: 88 });
-      break;
-    default:
-      throw new AppError("bad_request", "Unsupported file type.");
+  const format = formatForMime(mimeType);
+  if (!format) throw new AppError("bad_request", "Unsupported file type.");
+  try {
+    const sanitized = sanitizeImage(new Uint8Array(input), format);
+    return {
+      buffer: Buffer.from(sanitized.bytes),
+      mimeType,
+      width: sanitized.width,
+      height: sanitized.height,
+    };
+  } catch (error) {
+    if (error instanceof ImageSanitizeError) {
+      throw new AppError(
+        "bad_request",
+        `This image could not be used: ${error.message} Try exporting it again as a standard JPEG, PNG, or WebP file.`,
+      );
+    }
+    throw error;
   }
-  const { data, info } = await output.toBuffer({ resolveWithObject: true });
-  return {
-    buffer: data,
-    mimeType,
-    width: info.width,
-    height: info.height,
-  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,6 +172,7 @@ export async function processImage(
 /* ------------------------------------------------------------------ */
 
 export interface UploadAuthorization {
+  /** "local": the file is sent to /api/media/upload (object storage or the dev store). */
   mode: "client" | "local";
   pathname?: string;
   token?: string;
@@ -217,6 +227,18 @@ export async function authorizeUpload(input: {
   const env = getServerEnv();
   const pathname = `media/${randomUUID()}.${extensionForMime(input.mimeType)}`;
 
+  // Object storage takes the file through the server, which rebuilds it
+  // before storing it.
+  if (objectStorageConfigured() || !isProduction()) {
+    const ticket = signTicket({
+      purpose: "media-upload",
+      userId: input.actor.id,
+      mimeType: input.mimeType,
+      exp: Date.now() + 10 * 60 * 1000,
+    });
+    return { mode: "local", ticket };
+  }
+
   if (env.blobReadWriteToken) {
     const token = await generateClientTokenFromReadWriteToken({
       token: env.blobReadWriteToken,
@@ -230,19 +252,9 @@ export async function authorizeUpload(input: {
     return { mode: "client", pathname, token };
   }
 
-  if (!isProduction()) {
-    const ticket = signTicket({
-      purpose: "media-upload",
-      userId: input.actor.id,
-      mimeType: input.mimeType,
-      exp: Date.now() + 10 * 60 * 1000,
-    });
-    return { mode: "local", ticket };
-  }
-
   throw new AppError(
     "service_unavailable",
-    "Media storage is not configured. Set BLOB_READ_WRITE_TOKEN (Vercel Blob) and redeploy.",
+    "Media storage is not configured. Set the object storage variables (AWS_ENDPOINT_URL_S3, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, OBJECT_STORAGE_BUCKET) and redeploy.",
   );
 }
 
@@ -295,7 +307,7 @@ export interface MediaUploadMeta {
 async function insertMediaRow(input: {
   actor: SessionUser;
   storageKey: string;
-  storageProvider: "local" | "blob";
+  storageProvider: "local" | "blob" | typeof OBJECT_STORAGE_PROVIDER;
   publicUrl?: string;
   mimeType: string;
   sizeBytes: number;
@@ -349,17 +361,23 @@ export async function completeLocalUpload(input: {
       "This upload authorisation has expired. Please try the upload again.",
     );
   }
-  if (ticketPayload.mimeType !== input.mimeType) {
+  if (ticketPayload.mimeType !== input.mimeType || ticketPayload.userId !== input.actor.id) {
     throw new AppError("bad_request", "The upload does not match its authorisation.");
   }
 
   const processed = await processImage(input.buffer, input.mimeType);
-  const storageKey = `${randomUUID()}.${extensionForMime(input.mimeType)}`;
-  await writeLocalFile(storageKey, processed.buffer);
+  const fileName = `${randomUUID()}.${extensionForMime(input.mimeType)}`;
+  const useObjectStorage = objectStorageConfigured();
+  const storageKey = useObjectStorage ? `media/${fileName}` : fileName;
+  if (useObjectStorage) {
+    await putObject(storageKey, processed.buffer, processed.mimeType);
+  } else {
+    await writeLocalFile(storageKey, processed.buffer);
+  }
   return insertMediaRow({
     actor: input.actor,
     storageKey,
-    storageProvider: "local",
+    storageProvider: useObjectStorage ? OBJECT_STORAGE_PROVIDER : "local",
     mimeType: processed.mimeType,
     sizeBytes: processed.buffer.length,
     width: processed.width,
@@ -557,6 +575,8 @@ export async function deleteMedia(actor: SessionUser, id: string): Promise<void>
 
   if (existing.storageProvider === "local") {
     await deleteLocalFile(existing.storageKey);
+  } else if (existing.storageProvider === OBJECT_STORAGE_PROVIDER) {
+    await deleteObject(existing.storageKey).catch(() => undefined);
   } else {
     const env = getServerEnv();
     await deleteBlob(existing.storageKey, { token: env.blobReadWriteToken }).catch(

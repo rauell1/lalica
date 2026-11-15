@@ -1,8 +1,9 @@
 /**
- * Local development upload endpoint. Only reachable when the app is not
- * running in production: the authorisation ticket is signed server side
+ * Server upload endpoint, used with object storage and in local
+ * development (it is not reachable in production without object storage):
+ * the authorisation ticket is signed server side
  * and bound to the uploading user, file bytes are verified by signature,
- * size, and dimensions, and metadata is stripped before storage.
+ * size, and structure, and metadata is stripped before storage.
  */
 
 import type { NextRequest } from "next/server";
@@ -13,12 +14,13 @@ import { assertSameOrigin, jsonError } from "@/lib/utils/http";
 import { AppError } from "@/lib/errors";
 import { isProduction } from "@/lib/env";
 import { completeLocalUpload, MAX_UPLOAD_BYTES } from "@/lib/media/service";
+import { objectStorageConfigured } from "@/lib/media/object-storage";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   try {
-    if (isProduction()) {
+    if (isProduction() && !objectStorageConfigured()) {
       return new Response(null, { status: 404 });
     }
     const user = await getSessionUser();

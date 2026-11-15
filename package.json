@@ -32,6 +32,7 @@
     "@upstash/ratelimit": "2.0.8",
     "@upstash/redis": "1.38.4",
     "@vercel/blob": "2.8.0",
+    "aws4fetch": "^1.0.20",
     "better-auth": "1.7.4",
     "drizzle-orm": "0.45.2",
     "next": "16.4.6",
@@ -39,7 +40,6 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "resend": "6.27.0",
-    "sharp": "^0.35.4",
     "zod": "4.6.1"
   },
   "devDependencies": {
@@ -54,6 +54,7 @@
     "eslint": "10.10.0",
     "eslint-config-next": "16.3.4",
     "jsdom": "30.0.1",
+    "sharp": "^0.35.5",
     "tailwindcss": "4.3.3",
     "tsx": "4.23.13",
     "typescript": "5.9.3",

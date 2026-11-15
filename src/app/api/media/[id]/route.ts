@@ -1,8 +1,9 @@
 /**
  * Serves media through the site origin.
  *
- * Published images redirect to the public object storage URL (or stream
- * from the local development store). Draft images require an active
+ * Published images stream from object storage (or redirect to the public
+ * Vercel Blob URL for older uploads, or stream from the local development
+ * store). Draft images require an active
  * staff session and are never cached publicly.
  */
 
@@ -13,6 +14,21 @@ import { getPublicDb, runAsActor, media } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/roles";
 import { readLocalFile } from "@/lib/media/service";
+import { getObject, OBJECT_STORAGE_PROVIDER } from "@/lib/media/object-storage";
+
+/** Streams an object storage file; the key changes with every upload. */
+async function objectResponse(key: string, mimeType: string, cacheControl: string) {
+  const object = await getObject(key).catch(() => null);
+  if (!object?.body) return new Response(null, { status: 404 });
+  const headers = new Headers({
+    "Content-Type": mimeType,
+    "Cache-Control": cacheControl,
+    "X-Content-Type-Options": "nosniff",
+  });
+  const length = object.headers.get("content-length");
+  if (length) headers.set("Content-Length", length);
+  return new Response(object.body, { headers });
+}
 
 export const runtime = "nodejs";
 
@@ -45,6 +61,11 @@ export async function GET(
   if (!row) return new Response(null, { status: 404 });
 
   if (row.status === "published") {
+    if (row.storageProvider === OBJECT_STORAGE_PROVIDER) {
+      // Published state can change, so browsers revalidate after a day while
+      // the CDN may keep a copy for an hour.
+      return objectResponse(row.storageKey, row.mimeType, "public, max-age=86400, s-maxage=3600");
+    }
     if (row.storageProvider === "blob" && row.publicUrl) {
       return new Response(null, {
         status: 308,
@@ -70,6 +91,10 @@ export async function GET(
   // Draft media: staff only, never publicly cached.
   if (!user || !hasPermission(user.role, "canUploadMedia")) {
     return new Response(null, { status: 404 });
+  }
+
+  if (row.storageProvider === OBJECT_STORAGE_PROVIDER) {
+    return objectResponse(row.storageKey, row.mimeType, "private, no-store");
   }
 
   if (row.storageProvider === "blob") {
