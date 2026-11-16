@@ -4,7 +4,10 @@ import Link from "next/link";
 import { getSettingsCached } from "@/lib/settings/cache";
 import { Breadcrumbs } from "@/components/public/breadcrumbs";
 
-export const dynamic = "force-dynamic";
+// Rendered once and kept in the page cache (open-next.config.ts). Publishing
+// or settings changes clear it through the cache tags and revalidatePath in
+// src/lib/invalidate.ts; otherwise it is rebuilt hourly, like the data it reads.
+export const revalidate = 3600;
 
 export async function generateMetadata(): Promise<Metadata> {
   return {
