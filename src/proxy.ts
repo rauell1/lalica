@@ -19,11 +19,11 @@ function cspHeader(): string {
   return [
     "default-src 'self'",
     "base-uri 'self'",
-    `script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGINS}`.trim(),
+    `script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGINS} https://static.cloudflareinsights.com`.trim(),
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com",
     "font-src 'self'",
-    "connect-src 'self'",
+    "connect-src 'self' https://cloudflareinsights.com",
     "frame-src https://challenges.cloudflare.com",
     "object-src 'none'",
     "form-action 'self'",
