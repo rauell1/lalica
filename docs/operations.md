@@ -44,8 +44,10 @@ bulk changes. (See scripts/export-content.ts for the exact output path.)
 
 ## Media recovery
 
-- Media files live in Vercel Blob (production) or ./storage/media (local
-  demo). The database stores only metadata and storage keys, never bytes.
+- Media files live in Neon object storage (production, bucket `media`;
+  images uploaded before the move to Cloudflare are still in Vercel Blob)
+  or ./storage/media (local demo). The database stores only metadata and
+  storage keys, never bytes.
 - Blob is durable in the Vercel account. For an extra safety copy, export
   the media list from the admin media library and download the public
   files, or script a copy using the Blob SDK with the read/write token.
