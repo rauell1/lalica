@@ -2,6 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Keep postgres.js out of the Next.js server bundle so the Cloudflare build
+  // resolves its "workerd" export, which connects with cloudflare:sockets.
+  // The bundled Node build upgrades the socket to TLS in a way Workers does
+  // not support, and every database read hung.
+  serverExternalPackages: ["postgres"],
   reactStrictMode: true,
   images: {
     // Remote media images are always served through the same-origin
