@@ -9,7 +9,9 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { CookieBanner } from "@/components/public/cookie-banner";
 
-export const dynamic = "force-dynamic";
+// No route segment config here: a "force-dynamic" in the root layout would
+// override every page's own revalidate. The admin pages, /contact and the
+// catch-all route set force-dynamic themselves.
 
 export async function generateMetadata(): Promise<Metadata> {
   const env = getServerEnv();
