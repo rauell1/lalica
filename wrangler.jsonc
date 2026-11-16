@@ -1,6 +1,10 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "lalica",
+  // OpenNext refreshes stale cached pages (revalidate) by calling this Worker
+  // through this binding; without it the refresh is skipped and every
+  // request renders the page again.
+  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "lalica" }],
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
