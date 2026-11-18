@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
   // The bundled Node build upgrades the socket to TLS in a way Workers does
   // not support, and every database read hung.
   serverExternalPackages: ["postgres"],
+  // See src/lib/runtime/undici-fetch.ts: undici cannot run on Workers.
+  turbopack: { resolveAlias: { undici: "./src/lib/runtime/undici-fetch.ts" } },
   reactStrictMode: true,
   images: {
     // Remote media images are always served through the same-origin
