@@ -16,9 +16,13 @@
   "keep_vars": true,
   "workers_dev": true,
   "observability": { "enabled": true },
-  // Page cache for open-next.config.ts.
+  // Page cache for open-next.config.ts (pages kept in R2; the bucket was
+  // created ahead of the deploy).
+  "r2_buckets": [
+    { "binding": "NEXT_INC_CACHE_R2_BUCKET", "bucket_name": "lalica-next-cache" }
+  ],
+  // Tag cache for revalidatePath/revalidateTag (open-next.config.ts).
   "kv_namespaces": [
-    { "binding": "NEXT_INC_CACHE_KV", "id": "8c8a01a8a3734883a699027aef657c40" },
     { "binding": "NEXT_TAG_CACHE_KV", "id": "a966a07f6a924e1d843e2403bea9f37b" }
   ]
 }
