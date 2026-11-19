@@ -3,9 +3,9 @@
 Corporate website and lightweight CMS for Lalica Engineering Limited
 (DSM Center, Kahawa West, Nairobi, Kenya).
 
-Status: the application is complete and locally verified (see
-docs/acceptance-report.md). Nothing has been deployed to production yet;
-follow docs/deployment.md for the first deployment.
+Status: the application is complete and verified (see
+docs/acceptance-report.md). It runs on Cloudflare Workers at
+https://lalica.rauell.workers.dev; see docs/deployment.md.
 
 ## Stack
 
@@ -122,3 +122,34 @@ Demo sign-in (local only, clearly labelled): use the demo buttons on
 - The production rate limiter is Upstash Redis with atomic counters.
   If it is unavailable, public submissions and sensitive mutations fail
   closed while cacheable public pages stay up.
+
+## Project information
+
+| | |
+|---|---|
+| Live site | https://lalica.rauell.workers.dev |
+| Hosting | Cloudflare Workers |
+| Default branch | `main` |
+| Repository | Public |
+
+### Stack
+
+- Next.js 16 (App Router), React 19, TypeScript (strict), Tailwind CSS 4
+- Drizzle ORM with Neon PostgreSQL
+- Better Auth for the admin CMS
+- Upstash rate limiting, Resend email
+- Vitest for tests
+
+### Deployment
+
+Production runs on Cloudflare Workers at https://lalica.rauell.workers.dev. `.github/workflows/deploy-cloudflare.yml` builds and deploys on every push to `main`, using the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets. Public build-time values are repository variables; runtime secrets are Worker secrets.
+
+### Contributing and security
+
+- How to set up, test and submit changes: [CONTRIBUTING.md](CONTRIBUTING.md)
+- How to report a vulnerability: [SECURITY.md](SECURITY.md)
+- Expected behaviour in project spaces: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
+### Licence
+
+No open-source licence has been granted. The code, content and brand assets belong to the project owner and all rights are reserved. Ask the owner before reusing any part of this repository.
