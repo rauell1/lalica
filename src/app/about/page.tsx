@@ -12,7 +12,9 @@ import { CheckIcon } from "@/components/public/service-icons";
 // Rendered once and kept in the page cache (open-next.config.ts). Publishing
 // or settings changes clear it through the cache tags and revalidatePath in
 // src/lib/invalidate.ts; otherwise it is rebuilt hourly, like the data it reads.
-export const revalidate = 3600;
+// Publishing, settings and media changes refresh this at once (src/lib/invalidate.ts);
+// the daily refresh is only a backstop.
+export const revalidate = 86400;
 
 export async function generateMetadata() {
   const company = await getSettingsCached("company")();
