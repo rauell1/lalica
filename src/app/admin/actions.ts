@@ -12,7 +12,7 @@
 import { getSessionUser } from "@/lib/auth/session";
 import { hasPermission, type Permission } from "@/lib/auth/roles";
 import { AppError, errorMessage, isUserFacingError } from "@/lib/errors";
-import { invalidateContent, invalidateSettings } from "@/lib/invalidate";
+import { invalidateContent, invalidateSettings, invalidateMedia } from "@/lib/invalidate";
 import { enforceLimit, hashIdentifier } from "@/lib/ratelimit";
 import {
   archiveContent,
@@ -236,6 +236,7 @@ export async function updateMediaAction(input: {
 }): Promise<ActionResult> {
   return withActor("canUploadMedia", async (actor) => {
     await updateMedia({ actor, ...input });
+    invalidateMedia();
   });
 }
 
@@ -245,6 +246,7 @@ export async function setMediaStatusAction(input: {
 }): Promise<ActionResult> {
   return withActor("canUploadMedia", async (actor) => {
     await setMediaStatus(actor, input.id, input.status);
+    invalidateMedia();
   });
 }
 
@@ -253,6 +255,7 @@ export async function deleteMediaAction(input: {
 }): Promise<ActionResult> {
   return withActor("canUploadMedia", async (actor) => {
     await deleteMedia(actor, input.id);
+    invalidateMedia();
   });
 }
 

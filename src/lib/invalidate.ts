@@ -62,3 +62,17 @@ export function invalidateSettings(key?: string): void {
   revalidatePath("/privacy");
   revalidatePath("/sitemap.xml");
 }
+
+/**
+ * Media edits (alt text, caption, publish status, delete) can change any
+ * public page that shows the image, so refresh every cached page.
+ */
+export function invalidateMedia(): void {
+  refreshTags([
+    CACHE_TAG_CONTENT,
+    CACHE_TAG_CONTENT_DETAIL,
+    CACHE_TAG_CONTENT_LIST,
+    CACHE_TAG_SETTINGS,
+  ]);
+  revalidatePath("/", "layout");
+}
